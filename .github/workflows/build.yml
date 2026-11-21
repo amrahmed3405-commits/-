@@ -20,6 +20,8 @@ jobs:
           flutter create --platforms=android --org com.wirdi --project-name wirdi app
           rm -rf app/test
           cp main.dart app/lib/main.dart
+          mkdir -p app/assets
+          cp app.html app/assets/app.html
           cat > app/pubspec.yaml <<'EOF'
           name: wirdi
           description: وردي اليومي
@@ -32,15 +34,14 @@ jobs:
               sdk: flutter
             shared_preferences: ^2.3.2
             flutter_local_notifications: ^17.2.3
+            timezone: ^0.9.4
             adhan: 2.0.0+1
             geolocator: ^13.0.1
-            timezone: ^0.9.4
-
-          dependency_overrides:
-            geolocator_android: 4.6.1
-
+            webview_flutter: ^4.9.0
           flutter:
             uses-material-design: true
+            assets:
+              - assets/app.html
           EOF
       - name: Patch Android config
         run: |
@@ -49,13 +50,10 @@ jobs:
           root = 'app/android/app'
           mp = os.path.join(root, 'src/main/AndroidManifest.xml')
           s = open(mp, encoding='utf-8').read()
-          perms = ('    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n'
-                   '    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n'
-                   '    <uses-permission android:name="android.permission.VIBRATE"/>\n'
-                   '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n'
-                   '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n'
-                   '    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32"/>\n'
-                   '    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n')
+          perms = ''.join('    <uses-permission android:name="android.permission.%s"%s/>\n' % (n, extra) for n, extra in [
+              ('INTERNET', ''), ('POST_NOTIFICATIONS', ''), ('RECEIVE_BOOT_COMPLETED', ''), ('VIBRATE', ''),
+              ('ACCESS_COARSE_LOCATION', ''), ('ACCESS_FINE_LOCATION', ''),
+              ('SCHEDULE_EXACT_ALARM', ' android:maxSdkVersion="32"'), ('USE_EXACT_ALARM', '')])
           recv = ('        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"/>\n'
                   '        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">\n'
                   '            <intent-filter>\n'
@@ -77,6 +75,8 @@ jobs:
               kts = name.endswith('.kts')
               flag = 'isCoreLibraryDesugaringEnabled = true' if kts else 'coreLibraryDesugaringEnabled true'
               g = re.sub(r'(compileOptions\s*\{)', lambda m: m.group(1) + '\n        ' + flag, g, count=1)
+              g = re.sub(r'minSdkVersion\s+flutter\.minSdkVersion', 'minSdkVersion 24', g)
+              g = re.sub(r'minSdk\s*=\s*flutter\.minSdkVersion', 'minSdk = 24', g)
               if kts:
                   g += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")\n}\n'
               else:
@@ -111,30 +111,28 @@ jobs:
               w.close()
           exts = ['mp3', 'wav', 'ogg', 'm4a']
           def find(name):
-              for e in exts:
-                  p = 'sounds/%s.%s' % (name, e)
-                  if os.path.exists(p):
-                      return p
+              for folder in ['.', 'sounds']:
+                  for e in exts:
+                      p = '%s/%s.%s' % (folder, name, e)
+                      if os.path.exists(p):
+                          return p
               return None
-          used = {}
-          for name in ['adhan', 'adhan_fajr', 'iqama']:
+          for n in range(1, 6):
+              name = 'adhan_%d' % n
               src = find(name)
               if src:
-                  ext = src.rsplit('.', 1)[1]
-                  shutil.copy(src, '%s/%s.%s' % (raw, name, ext))
-                  used[name] = '%s.%s' % (name, ext)
+                  shutil.copy(src, '%s/%s.%s' % (raw, name, src.rsplit('.', 1)[1]))
                   print('using your file for', name, src)
-          if 'adhan' not in used:
-              write(raw + '/adhan.wav', [(440, 0.9), (523, 0.9), (659, 1.4)] * 3)
-              used['adhan'] = 'adhan.wav'
-              print('no adhan file found, generated a test chime')
-          if 'adhan_fajr' not in used:
-              ext = used['adhan'].rsplit('.', 1)[1]
-              shutil.copy('%s/%s' % (raw, used['adhan']), '%s/adhan_fajr.%s' % (raw, ext))
-              print('adhan_fajr uses the adhan sound')
-          if 'iqama' not in used:
+              else:
+                  write('%s/%s.wav' % (raw, name), [(330 + 40 * n, 0.9), (392 + 40 * n, 0.9), (494 + 40 * n, 1.4)] * 2)
+                  print('no file for', name, '- generated a test chime')
+          src = find('iqama')
+          if src:
+              shutil.copy(src, '%s/iqama.%s' % (raw, src.rsplit('.', 1)[1]))
+              print('using your file for iqama', src)
+          else:
               write(raw + '/iqama.wav', [(659, 0.7), (523, 1.2)] * 2)
-              print('no iqama file found, generated a test chime')
+              print('no iqama file, generated a test chime')
           open(raw + '/keep.xml', 'w').write('<?xml version="1.0" encoding="utf-8"?>\n<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@raw/*" />\n')
           print(sorted(os.listdir(raw)))
           PY
